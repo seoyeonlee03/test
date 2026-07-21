@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>교실 다중 인원 AI 시험 부정행위 감지 시스템</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Pretendard', -apple-system, sans-serif;
+      background-color: #0d1117;
+      color: #c9d1d9;
+      padding: 15px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    header {
+      width: 100%;
+      max-width: 1400px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 15px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #30363d;
+    }
+    header h1 { font-size: 1.5rem; color: #58a6ff; }
+
+    .main-container {
+      display: flex;
+      gap: 20px;
+      max-width: 1400px;
+      width: 100%;
+    }
+
+    .video-section {
+      flex: 2;
+      background: #161b22;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid #30363d;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .canvas-wrapper {
+      position: relative;
+      width: 100%;
+      padding-top: 56.25%; /* 16:9 비율 */
+      background: #000;
+    }
+
+    video, canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .controls {
+      padding: 15px 20px;
+      background: #161b22;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      border-top: 1px solid #30363d;
+    }
+
+    .control-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .sensitivity-box {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #21262d;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      border: 1px solid #30363d;
+    }
+
+    .sensitivity-box input { cursor: pointer; }
+
+    .status-badge {
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      font-weight: bold;
+      background: #1f6beb;
+      color: #fff;
+    }
+
+    button {
+      background: #238636;
+      color: #fff;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    button:hover { background: #2ea043; }
+    button:disabled { background: #343941; color: #8b949e; cursor: not-allowed; }
+
+    .side-section {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+    }
+
+    .panel {
+      background: #161b22;
+      border-radius: 12px;
+      padding: 16px;
+      border: 1px solid #30363d;
+    }
+
+    .panel h2 {
+      font-size: 1rem;
+      margin-bottom: 12px;
+      color: #f0f6fc;
+      border-bottom: 1px solid #30363d;
+      padding-bottom: 8px;
+    }
+
+    .grid-stats {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+
+    .stat-card {
+      background: #21262d;
+      padding: 12px;
+      border-radius: 8px;
+      text-align: center;
+      border: 1px solid #30363d;
+    }
+    .stat-card .label { font-size: 0.75rem; color: #8b949e; }
+    .stat-card .value { font-size: 1.3rem; font-weight: bold; margin-top: 4px; }
+
+    .log-container {
+      height: 380px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .log-item {
+      background: #21262d;
+      padding: 10px 12px;
+      border-radius: 6px;
+      font-size: 0.82rem;
+      border-left: 4px solid #58a6ff;
+    }
+    .log-item.warning { border-left-color: #d29922; background: #272115; }
+    .log-item.danger { border-left-color: #f85149; background: #2c1919; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>교실 다중 인원 AI 시험 부정행위 감지 시스템</h1>
+    <div id="statusBadge" class="status-badge">AI 모델 로딩 중...</div>
+  </header>
+
+  <div class="main-container">
+    <div class="video-section">
+      <div class="canvas-wrapper">
+        <video id="webcam" autoplay playsinline></video>
+        <canvas id="outputCanvas"></canvas>
+      </div>
+      <div class="controls">
+        <div class="control-group">
+          <span id="timerText" style="font-weight:bold; color:#e3b341;">시험 대기 중</span>
+        </div>
+
+        <div class="control-group">
+          <div class="sensitivity-box">
+            <label for="sensitivityRange">감지 민감도:</label>
+            <input type="range" id="sensitivityRange" min="1" max="5" value="3">
+            <span id="sensitivityValue" style="color:#58a6ff; font-weight:bold;">3단계</span>
+          </div>
+
+          <button id="calibrateBtn" disabled>전원 정면 등록</button>
+          <button id="startBtn" disabled>시험 시작 (30초)</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="side-section">
+      <div class="panel">
+        <h2>실시간 모니터링 현황</h2>
+        <div class="grid-stats">
+          <div class="stat-card">
+            <div class="label">인식된 인원 (사물 제외)</div>
+            <div class="value" id="detectedCount" style="color:#58a6ff;">0명</div>
+          </div>
+          <div class="stat-card">
+            <div class="label">시선/고개 이탈 감지</div>
+            <div class="value" id="gazeAlertCount" style="color:#d29922;">0회</div>
+          </div>
+          <div class="stat-card">
+            <div class="label">뒤돌아봄/얼굴 분실</div>
+            <div class="value" id="faceLostCount" style="color:#f85149;">0회</div>
+          </div>
+          <div class="stat-card">
+            <div class="label">종료 후 마킹 위반</div>
+            <div class="value" id="postBellCount" style="color:#da3633;">0회</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>실시간 부정행위 알림 로그</h2>
+        <div class="log-container" id="logContainer">
+          <div class="log-item">카메라 권한 승인을 기다리는 중입니다...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const videoElement = document.getElementById('webcam');
+    const canvasElement = document.getElementById('outputCanvas');
+    const canvasCtx = canvasElement.getContext('2d');
+
+    const statusBadge = document.getElementById('statusBadge');
+    const logContainer = document.getElementById('logContainer');
+    const startBtn = document.getElementById('startBtn');
+    const calibrateBtn = document.getElementById('calibrateBtn');
+    const timerText = document.getElementById('timerText');
+    const sensitivityRange = document.getElementById('sensitivityRange');
+    const sensitivityValue = document.getElementById('sensitivityValue');
+
+    const detectedCountEl = document.getElementById('detectedCount');
+    const gazeAlertCountEl = document.getElementById('gazeAlertCount');
+    const faceLostCountEl = document.getElementById('faceLostCount');
+    const postBellCountEl = document.getElementById('postBellCount');
+
+    // 상태 및 설정 변수
+    let isExamActive = false;
+    let isExamOver = false;
+    let timerInterval = null;
+    let timeLeft = 30;
+
+    let gazeAlertTotal = 0;
+    let faceLostTotal = 0;
+    let postBellTotal = 0;
+
+    let faceBaselines = {};
+    let faceTrackStates = {};
+    let isCalibrated = false;
+
+    // 민감도 조절 매핑 (단계별 threshold)
+    // 1단계(둔감) ~ 5단계(아주 민감)
+    let currentSensitivity = 3;
+    const sensitivitySettings = {
+      1: { irisThreshold: 0.12, pitchThreshold: 0.08, holdFrames: 12 },
+      2: { irisThreshold: 0.09, pitchThreshold: 0.06, holdFrames: 9 },
+      3: { irisThreshold: 0.06, pitchThreshold: 0.04, holdFrames: 6 }, // 기본값
+      4: { irisThreshold: 0.04, pitchThreshold: 0.03, holdFrames: 4 },
+      5: { irisThreshold: 0.02, pitchThreshold: 0.02, holdFrames: 2 }
+    };
+
+    sensitivityRange.addEventListener('input', (e) => {
+      currentSensitivity = parseInt(e.target.value);
+      sensitivityValue.innerText = `${currentSensitivity}단계`;
+    });
+
+    // 종 소리 알림
+    function playBellSound() {
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+      gain.gain.setValueAtTime(0.5, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 1.2);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 1.2);
+    }
+
+    function addLog(msg, type = 'normal') {
+      const item = document.createElement('div');
+      item.className = `log-item ${type}`;
+      item.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      logContainer.appendChild(item);
+      logContainer.scrollTop = logContainer.scrollHeight;
+    }
+
+    // MediaPipe FaceMesh 초기화 (사물 오탐지 방지 적용)
+    const faceMesh = new FaceMesh({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+    });
+
+    faceMesh.setOptions({
+      maxNumFaces: 35,             // 동시 인식 35명
+      refineLandmarks: true,       // 눈동자(홍채) 정밀 추적
+      minDetectionConfidence: 0.55, // [수정] 0.3 -> 0.55로 올려 사물 인식 배제
+      minTrackingConfidence: 0.55  // [수정] 0.3 -> 0.55로 올림
+    });
+
+    faceMesh.onResults(onResults);
+
+    // 카메라 작동 (Full HD 요청)
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        await faceMesh.send({ image: videoElement });
+      },
+      width: 1920,
+      height: 1080
+    });
+
+    camera.start().then(() => {
+      statusBadge.innerText = "시스템 준비 완료";
+      statusBadge.style.background = "#238636";
+      calibrateBtn.disabled = false;
+      addLog("카메라 연결 성공. [전원 정면 등록] 버튼을 눌러 기준을 설정하세요.");
+    });
+
+    calibrateBtn.addEventListener('click', () => {
+      isCalibrated = true;
+      faceBaselines = {};
+      statusBadge.innerText = "정면 기준 설정 완료";
+      startBtn.disabled = false;
+      addLog("모든 학생의 현재 정면/눈동자 시선이 기준점으로 등록되었습니다.", "normal");
+    });
+
+    startBtn.addEventListener('click', () => {
+      isExamActive = true;
+      isExamOver = false;
+      timeLeft = 30;
+      gazeAlertTotal = 0;
+      faceLostTotal = 0;
+      postBellTotal = 0;
+
+      gazeAlertCountEl.innerText = "0회";
+      faceLostCountEl.innerText = "0회";
+      postBellCountEl.innerText = "0회";
+
+      startBtn.disabled = true;
+      calibrateBtn.disabled = true;
+
+      addLog("🔔 시험 시작! 실시간 모니터링을 진행합니다.", "normal");
+
+      timerInterval = setInterval(() => {
+        timeLeft--;
+        timerText.innerText = `남은 시간: ${timeLeft}초`;
+        if (timeLeft <= 0) {
+          clearInterval(timerInterval);
+          finishExam();
+        }
+      }, 1000);
+    });
+
+    function finishExam() {
+      isExamActive = false;
+      isExamOver = true;
+      playBellSound();
+      timerText.innerText = "시험 종료 (종 울림)";
+      addLog("🚨 [종 울림] 시험이 종료되었습니다. 즉시 필기도구를 놓으세요!", "danger");
+
+      setTimeout(() => {
+        isExamOver = false;
+        startBtn.disabled = false;
+        calibrateBtn.disabled = false;
+        timerText.innerText = "모니터링 종료";
+      }, 5000);
+    }
+
+    // AI 결과 분석 함수
+    function onResults(results) {
+      canvasElement.width = videoElement.videoWidth;
+      canvasElement.height = videoElement.videoHeight;
+
+      canvasCtx.save();
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+      const rawFaces = results.multiFaceLandmarks;
+      
+      // [수정] 크기 필터링: 화면 크기 대비 너무 작은 오탐 사물 제거
+      const validFaces = [];
+      if (rawFaces) {
+        rawFaces.forEach(landmarks => {
+          const faceWidth = Math.abs(landmarks[454].x - landmarks[234].x);
+          const faceHeight = Math.abs(landmarks[152].y - landmarks[10].y);
+          
+          // 얼굴 폭 및 높이가 화면의 2.5% 이상인 진짜 얼굴만 인정
+          if (faceWidth > 0.025 && faceHeight > 0.025) {
+            validFaces.push(landmarks);
+          }
+        });
+      }
+
+      const faceCount = validFaces.length;
+      detectedCountEl.innerText = `${faceCount}명`;
+
+      const setting = sensitivitySettings[currentSensitivity];
+
+      if (validFaces.length > 0) {
+        validFaces.forEach((landmarks, index) => {
+          const faceId = `학생_${index + 1}`;
+
+          if (!faceTrackStates[faceId]) {
+            faceTrackStates[faceId] = { gazeFrames: 0, postBellFrames: 0 };
+          }
+
+          // 1. 눈동자 위치 계산
+          const leftIris = landmarks[468];
+          const leftEyeInner = landmarks[133];
+          const leftEyeOuter = landmarks[33];
+          const eyeWidth = Math.abs(leftEyeOuter.x - leftEyeInner.x);
+          const irisPosRatio = eyeWidth > 0 ? (leftIris.x - leftEyeOuter.x) / eyeWidth : 0.5;
+
+          // 2. 고개 상하(Pitch) 각도 계산
+          const noseTip = landmarks[1];
+          const eyeCenterY = (landmarks[33].y + landmarks[263].y) / 2;
+          const pitch = noseTip.y - eyeCenterY;
+
+          // 정면 기준 등록
+          if (isCalibrated && !faceBaselines[faceId]) {
+            faceBaselines[faceId] = { irisRatio: irisPosRatio, pitch: pitch };
+          }
+
+          const base = faceBaselines[faceId];
+          let isAlerting = false;
+
+          // 시험 진행 중 검사
+          if (isExamActive && base) {
+            const irisDiff = Math.abs(irisPosRatio - base.irisRatio);
+            const pitchDiff = pitch - base.pitch;
+
+            if (irisDiff > setting.irisThreshold || Math.abs(pitchDiff) > setting.pitchThreshold) {
+              faceTrackStates[faceId].gazeFrames++;
+
+              if (faceTrackStates[faceId].gazeFrames === setting.holdFrames) {
+                gazeAlertTotal++;
+                gazeAlertCountEl.innerText = `${gazeAlertTotal}회`;
+                addLog(`⚠️ [${faceId}] 부정행위 의심 (시선/고개 이탈 감지)`, "warning");
+              }
+              if (faceTrackStates[faceId].gazeFrames >= setting.holdFrames) {
+                isAlerting = true;
+              }
+            } else {
+              faceTrackStates[faceId].gazeFrames = 0;
+            }
+          }
+
+          // 종이 울린 후 마킹 지속 검사
+          if (isExamOver && base) {
+            if (pitch - base.pitch > setting.pitchThreshold) {
+              faceTrackStates[faceId].postBellFrames++;
+              if (faceTrackStates[faceId].postBellFrames === 6) {
+                postBellTotal++;
+                postBellCountEl.innerText = `${postBellTotal}회`;
+                addLog(`🚨 [${faceId}] 종료 후 시험지 주시/마킹 지속 위반!`, "danger");
+              }
+              isAlerting = true;
+            }
+          }
+
+          // 시각화 오버레이 렌더링
+          drawFaceOverlay(landmarks, faceId, isAlerting);
+        });
+      }
+
+      canvasCtx.restore();
+    }
+
+    // 화면 시각화 렌더링
+    function drawFaceOverlay(landmarks, label, isAlert) {
+      let minX = canvasElement.width, minY = canvasElement.height;
+      let maxX = 0, maxY = 0;
+
+      landmarks.forEach(pt => {
+        const x = pt.x * canvasElement.width;
+        const y = pt.y * canvasElement.height;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      });
+
+      // Bounding Box
+      canvasCtx.strokeStyle = isAlert ? '#f85149' : '#3fb950';
+      canvasCtx.lineWidth = isAlert ? 3 : 2;
+      canvasCtx.strokeRect(minX, minY, maxX - minX, maxY - minY);
+
+      // Label background
+      canvasCtx.fillStyle = isAlert ? '#f85149' : '#238636';
+      canvasCtx.fillRect(minX, minY - 20, 60, 20);
+
+      // Label text
+      canvasCtx.fillStyle = '#ffffff';
+      canvasCtx.font = 'bold 11px sans-serif';
+      canvasCtx.fillText(label, minX + 5, minY - 6);
+
+      // 홍채(눈동자) 빨간 점 시각화
+      [468, 473].forEach(idx => {
+        const pt = landmarks[idx];
+        if (pt) {
+          canvasCtx.fillStyle = '#ff7b72';
+          canvasCtx.beginPath();
+          canvasCtx.arc(pt.x * canvasElement.width, pt.y * canvasElement.height, 2.5, 0, 2 * Math.PI);
+          canvasCtx.fill();
+        }
+      });
+    }
+  </script>
+</body>
+</html>
